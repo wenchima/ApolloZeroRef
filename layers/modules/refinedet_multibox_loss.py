@@ -3,9 +3,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
-from data import coco as cfg
+#from data import coco as cfg
+from data import *
 from ..box_utils import match, log_sum_exp, refine_match
 
+import pdb      ###### wenchi
 
 class RefineDetMultiBoxLoss(nn.Module):
     """SSD Weighted Loss Function
@@ -33,6 +35,7 @@ class RefineDetMultiBoxLoss(nn.Module):
     def __init__(self, num_classes, overlap_thresh, prior_for_matching,
                  bkg_label, neg_mining, neg_pos, neg_overlap, encode_target,
                  use_gpu=True, theta=0.01, use_ARM=False):
+        cfg = coco_refinedet['512']          ########### wenchi
         super(RefineDetMultiBoxLoss, self).__init__()
         self.use_gpu = use_gpu
         self.num_classes = num_classes
@@ -60,13 +63,16 @@ class RefineDetMultiBoxLoss(nn.Module):
                 shape: [batch_size,num_objs,5] (last idx is the label).
         """
         arm_loc_data, arm_conf_data, odm_loc_data, odm_conf_data, priors = predictions
+        #arm_loc_data, arm_conf_data, arm_locscore_data, odm_loc_data, odm_conf_data, odm_locscore_data, priors = predictions               ############## wenchi
         #print(arm_loc_data.size(), arm_conf_data.size(), 
         #      odm_loc_data.size(), odm_conf_data.size(), priors.size())
         #input()
         if self.use_ARM:
             loc_data, conf_data = odm_loc_data, odm_conf_data
+            #loc_data, conf_data, locscore_data = odm_loc_data, odm_conf_data, odm_locscore_data            ############## wenchi
         else:
             loc_data, conf_data = arm_loc_data, arm_conf_data
+            #loc_data, conf_data, locscore_data = arm_loc_data, arm_conf_data, arm_locscore_data            ############## wenchi
         num = loc_data.size(0)
         priors = priors[:loc_data.size(1), :]
         num_priors = (priors.size(0))
@@ -76,6 +82,7 @@ class RefineDetMultiBoxLoss(nn.Module):
         # match priors (default boxes) and ground truth boxes
         loc_t = torch.Tensor(num, num_priors, 4)
         conf_t = torch.LongTensor(num, num_priors)
+        #locscore_t = torch.LongTensor(num, num_priors)                    ############## wenchi
         for idx in range(num):
             truths = targets[idx][:, :-1].data
             labels = targets[idx][:, -1].data
@@ -85,17 +92,23 @@ class RefineDetMultiBoxLoss(nn.Module):
             if self.use_ARM:
                 refine_match(self.threshold, truths, defaults, self.variance, labels,
                     loc_t, conf_t, idx, arm_loc_data[idx].data)
+                #refine_match(self.threshold, truths, defaults, self.variance, labels,         ############# wenchi
+                    #loc_t, conf_t, locscore_t, idx, arm_loc_data[idx].data)                   ############# wenchi
             else:
                 refine_match(self.threshold, truths, defaults, self.variance, labels,
                     loc_t, conf_t, idx)
+                #refine_match(self.threshold, truths, defaults, self.variance, labels,         ############# wenchi       
+                    #loc_t, conf_t, locscore_t, idx)                                           ############# wenchi
         if self.use_gpu:
             loc_t = loc_t.cuda()
             conf_t = conf_t.cuda()
+            #locscore_t = locscore_t.cuda()            ############# wenchi
         # wrap targets
         #loc_t = Variable(loc_t, requires_grad=False)
         #conf_t = Variable(conf_t, requires_grad=False)
         loc_t.requires_grad = False
         conf_t.requires_grad = False
+        #locscore_t.requires_grad = False               ############# wenchi
         #print(loc_t.size(), conf_t.size())
 
         if self.use_ARM:
@@ -121,6 +134,14 @@ class RefineDetMultiBoxLoss(nn.Module):
         loss_c = log_sum_exp(batch_conf) - batch_conf.gather(1, conf_t.view(-1, 1))
         #print(loss_c.size())
 
+        ################# wenchi ####################
+        ## Compute max locscore across batch for hard negative mining
+        #batch_locscore = locscore_data.view(-1, 1)
+        #loss_ls = log_sum_exp(batch_locscore) - batch_locscore.gather(1, locscore_t.view(-1, 1))
+        ################# wenchi ####################
+        #pdb.set_trace()
+        #print("loss_c:", loss_c)
+        #print("pos.view(-1,1):", pos.view(-1,1))
         # Hard Negative Mining
         loss_c[pos.view(-1,1)] = 0  # filter out pos boxes for now
         loss_c = loss_c.view(num, -1)
@@ -145,5 +166,7 @@ class RefineDetMultiBoxLoss(nn.Module):
         #N = max(num_pos.data.sum().float(), 1)
         loss_l /= N
         loss_c /= N
+        #loss_ls /= N            ############# wenchi
         #print(N, loss_l, loss_c)
         return loss_l, loss_c
+        #return loss_l, loss_c, loss_ls        ############# wenchi

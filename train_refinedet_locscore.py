@@ -1,9 +1,11 @@
 from data import *
 from utils.augmentations import SSDAugmentation
-from layers.modules import RefineDetMultiBoxLoss
+#from layers.modules import RefineDetMultiBoxLoss
+from layers.modules.refinedet_multibox_loss_locscore import RefineDetMultiBoxLoss_Locscore            ############### wenchi
 from data.coco import COCODetection                ############ wenchi
 #from ssd import build_ssd
-from models.refinedet import build_refinedet
+#from models.refinedet import build_refinedet
+from models.refinedet_locscore import build_refinedet             ############## wenchi
 import os
 import sys
 import time
@@ -16,6 +18,8 @@ import torch.utils.data as data
 import numpy as np
 import argparse
 from utils.logging import Logger
+
+import pdb
 
 def str2bool(v):
     return v.lower() in ("yes", "true", "t", "1")
@@ -133,17 +137,19 @@ def train():
 
     optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=args.momentum,
                           weight_decay=args.weight_decay)
-    arm_criterion = RefineDetMultiBoxLoss(2, 0.5, True, 0, True, 3, 0.5,
+    arm_criterion = RefineDetMultiBoxLoss_Locscore(2, 0.5, True, 0, True, 3, 0.5,
                              False, args.cuda)
-    odm_criterion = RefineDetMultiBoxLoss(cfg['num_classes'], 0.5, True, 0, True, 3, 0.5,
+    odm_criterion = RefineDetMultiBoxLoss_Locscore(cfg['num_classes'], 0.5, True, 0, True, 3, 0.5,
                              False, args.cuda, use_ARM=True)
 
     net.train()
     # loss counters
     arm_loc_loss = 0
     arm_conf_loss = 0
+    arm_locscore_loss = 0              ########### wenchi
     odm_loc_loss = 0
     odm_conf_loss = 0
+    odm_locscore_loss = 0              ########### wenchi
     epoch = 0
     print('Loading the dataset...')
 
@@ -199,28 +205,39 @@ def train():
         out = net(images)
         # backprop
         optimizer.zero_grad()
-        arm_loss_l, arm_loss_c = arm_criterion(out, targets)
-        odm_loss_l, odm_loss_c = odm_criterion(out, targets)
+        #arm_loss_l, arm_loss_c = arm_criterion(out, targets)
+        arm_loss_l, arm_loss_c, arm_loss_ls = arm_criterion(out, targets)         ######### wenchi
+        #odm_loss_l, odm_loss_c = odm_criterion(out, targets)
+        odm_loss_l, odm_loss_c, odm_loss_ls = odm_criterion(out, targets)         ######### wenchi
         #input()
-        arm_loss = arm_loss_l + arm_loss_c
-        odm_loss = odm_loss_l + odm_loss_c
+        #arm_loss = arm_loss_l + arm_loss_c
+        arm_loss = arm_loss_l + arm_loss_c + arm_loss_ls       ########### wenchi
+        #odm_loss = odm_loss_l + odm_loss_c
+        odm_loss = odm_loss_l + odm_loss_c + odm_loss_ls        ########### wenchi
         loss = arm_loss + odm_loss
+        #pdb.set_trace()
         loss.backward()
         optimizer.step()
         t1 = time.time()
         arm_loc_loss += arm_loss_l.item()
         arm_conf_loss += arm_loss_c.item()
+        arm_locscore_loss += arm_loss_ls.item()        ######## wenchi
         odm_loc_loss += odm_loss_l.item()
         odm_conf_loss += odm_loss_c.item()
+        odm_locscore_loss += odm_loss_ls.item()        ######## wenchi
 
         if iteration % 10 == 0:
             print('timer: %.4f sec.' % (t1 - t0))
-            print('iter ' + repr(iteration) + ' || ARM_L Loss: %.4f ARM_C Loss: %.4f ODM_L Loss: %.4f ODM_C Loss: %.4f ||' \
-            % (arm_loss_l.item(), arm_loss_c.item(), odm_loss_l.item(), odm_loss_c.item()), end=' ')
+            #print('iter ' + repr(iteration) + ' || ARM_L Loss: %.4f ARM_C Loss: %.4f ODM_L Loss: %.4f ODM_C Loss: %.4f ||' \
+            #% (arm_loss_l.item(), arm_loss_c.item(), odm_loss_l.item(), odm_loss_c.item()), end=' ')
+            print('iter ' + repr(iteration) + ' || ARM_L Loss: %.4f ARM_C Loss: %.4f ARM_LS Loss: %.4f ODM_L Loss: %.4f ODM_C Loss: %.4f ODM_LS Loss: %.4f||' \
+            % (arm_loss_l.item(), arm_loss_c.item(), arm_loss_ls.item(), odm_loss_l.item(), odm_loss_c.item(), odm_loss_ls.item()), end=' ')                            ########## wenchi
 
         if args.visdom:
-            update_vis_plot(iteration, arm_loss_l.data[0], arm_loss_c.data[0],
-                            iter_plot, epoch_plot, 'append')
+            #update_vis_plot(iteration, arm_loss_l.data[0], arm_loss_c.data[0],
+                            #iter_plot, epoch_plot, 'append')
+            update_vis_plot(iteration, arm_loss_l.data[0], arm_loss_c.data[0], arm_loss_ls.data[0],             ################ wenchi
+                            iter_plot, epoch_plot, 'append')                                                    ################ wenchi
 
         if iteration != 0 and iteration % 5000 == 0:
             print('Saving state, iter:', iteration)
